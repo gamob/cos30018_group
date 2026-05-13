@@ -1,4 +1,4 @@
-4. The GUI (Graphical User Interface)
+4. The GUI (Graphical User Interface, use streamlit)
 
 This is the "friendly face" that ties everything together for the user!   
 
