@@ -219,3 +219,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local preprocessing outputs
+tmp/
+prep_out/
