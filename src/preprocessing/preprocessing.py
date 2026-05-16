@@ -3,10 +3,6 @@
 Provides functions to load images, convert to grayscale, apply binarization
 using several techniques (simple threshold, Otsu, adaptive), and produce a
 centered, fixed-size output suitable for ML training (e.g. 28x28 arrays).
-
-Example:
-    from preprocessing import preprocess_image
-    arr = preprocess_image("photo.jpg", size=(28,28), method="otsu")
 """
 from __future__ import annotations
 
@@ -177,6 +173,41 @@ def preprocess_image(path_or_img: Union[str, Image.Image, np.ndarray], *,
     return normalize_array(out) if normalize else out
 
 
+def preprocess_image_steps(path_or_img: Union[str, Image.Image, np.ndarray], *,
+                           size: Tuple[int, int] = (28, 28),
+                           method: str = "otsu",
+                           blur_ksize: int = 5,
+                           adaptive_params: Tuple[int, int] = (15, 7),
+                           thresh: int = 128,
+                           invert: bool = False,
+                           normalize: bool = True,
+                           margin: int = 4) -> dict:
+    """Run the pipeline but return intermediate arrays as a dict.
+
+    Returns keys: 'grayscale' (uint8), 'binary' (uint8), 'centered' (uint8), 'final' (float32 if normalized else uint8)
+    """
+    if isinstance(path_or_img, np.ndarray):
+        gray = path_or_img
+    else:
+        pil = load_image(path_or_img) if not isinstance(path_or_img, Image.Image) else path_or_img
+        gray = to_grayscale(pil)
+
+    method = method.lower()
+    if method == "simple":
+        binary = binarize_threshold(gray, thresh=thresh, invert=invert)
+    elif method == "otsu":
+        binary = binarize_otsu(gray, blur_ksize=blur_ksize, invert=invert)
+    elif method == "adaptive":
+        block_size, C = adaptive_params
+        binary = binarize_adaptive(gray, block_size=block_size, C=C, invert=invert)
+    else:
+        raise ValueError(f"unknown method: {method}")
+
+    centered = center_and_resize(binary, size=size, margin=margin)
+    final = normalize_array(centered) if normalize else centered
+    return {"grayscale": gray, "binary": binary, "centered": centered, "final": final}
+
+
 def save_array_as_image(arr: np.ndarray, out_path: str) -> None:
     """Save a numpy array (float 0..1 or uint8 0/255) as PNG image."""
     if arr.dtype == np.float32 or arr.dtype == np.float64:
@@ -212,11 +243,41 @@ if __name__ == "__main__":
     parser.add_argument("--size", type=int, nargs=2, default=(28, 28))
     parser.add_argument("--no-normalize", dest="normalize", action="store_false")
     parser.add_argument("--invert", action="store_true")
+    parser.add_argument("--blur-ksize", type=int, default=5, help="Gaussian blur kernel size for Otsu")
+    parser.add_argument("--adaptive-block-size", type=int, default=15, help="Block size for adaptive threshold (odd)")
+    parser.add_argument("--adaptive-C", type=int, default=7, help="C parameter for adaptive threshold")
+    parser.add_argument("--thresh", type=int, default=128, help="Threshold for simple method")
+    parser.add_argument("--save-steps", dest="save_steps", help="Directory to save intermediate images (grayscale,binary,centered,final)", default=None)
     args = parser.parse_args()
 
     for in_path, basename in _iter_images(args.input):
         try:
-            out_arr = preprocess_image(in_path, size=tuple(args.size), method=args.method, invert=args.invert, normalize=args.normalize)
+            if args.save_steps:
+                os.makedirs(args.save_steps, exist_ok=True)
+                steps = preprocess_image_steps(in_path,
+                                               size=tuple(args.size),
+                                               method=args.method,
+                                               blur_ksize=args.blur_ksize,
+                                               adaptive_params=(args.adaptive_block_size, args.adaptive_C),
+                                               thresh=args.thresh,
+                                               invert=args.invert,
+                                               normalize=args.normalize)
+                base = os.path.splitext(basename)[0]
+                save_array_as_image(steps["grayscale"], os.path.join(args.save_steps, f"{base}_grayscale.png"))
+                save_array_as_image(steps["binary"], os.path.join(args.save_steps, f"{base}_binary.png"))
+                save_array_as_image(steps["centered"], os.path.join(args.save_steps, f"{base}_centered.png"))
+                save_array_as_image(steps["final"], os.path.join(args.save_steps, f"{base}_final.png"))
+                out_arr = steps["final"]
+            else:
+                out_arr = preprocess_image(in_path,
+                                           size=tuple(args.size),
+                                           method=args.method,
+                                           blur_ksize=args.blur_ksize,
+                                           adaptive_params=(args.adaptive_block_size, args.adaptive_C),
+                                           thresh=args.thresh,
+                                           invert=args.invert,
+                                           normalize=args.normalize)
+
             out_name = os.path.splitext(basename)[0] + ".png"
             out_path = os.path.join(args.output, out_name)
             save_array_as_image(out_arr, out_path)
